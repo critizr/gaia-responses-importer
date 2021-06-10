@@ -21,6 +21,7 @@ var (
 	argConcurrency = flag.Int("j", 5, "level of concurrency (simultaneous tasks)")
 	argDb          = flag.String("db", "./import.db", "path to the database to import")
 	argToken       = flag.String("token", "", "Gaia API token")
+	argURL         = flag.String("url", "https://api.critizr.com/v2", "Gaia base URL")
 )
 
 type Entry struct {
@@ -38,7 +39,7 @@ func makeEntry(rows *sql.Rows) (entry Entry, err error) {
 }
 
 func (e *Entry) doImport() error {
-	req, err := http.NewRequest("POST", "https://api.critizr.com/v2/responses", strings.NewReader(e.Payload))
+	req, err := http.NewRequest("POST", *argURL+"/responses", strings.NewReader(e.Payload))
 	if err != nil {
 		return err
 	}
