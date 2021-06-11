@@ -10,6 +10,8 @@ Usage of gaia-responses-importer:
         level of concurrency (simultaneous tasks) (default 5)
   -token string
         Gaia API token
+  -url string
+        Gaia base URL (default "https://api.critizr.com/v2")
 ```
 
 ## Schema
@@ -18,7 +20,10 @@ Usage of gaia-responses-importer:
 CREATE TABLE IF NOT EXISTS imports (
     uid TEXT NOT NULL UNIQUE,
     payload TEXT NOT NULL,
-    imported_at TEXT
+    response_id TEXT,
+    imported_at TEXT,
+    error TEXT,
+    import_time_ms INTEGER
 );
 ```
 
@@ -27,4 +32,10 @@ CREATE TABLE IF NOT EXISTS imports (
 ```sh
 $ brew install FiloSottile/musl-cross/musl-cross # macOS only
 $ ./build_linux
+```
+
+## Export to CSV
+
+```
+sqlite3 -header -csv ./import.db "SELECT * FROM import ORDER BY imported_at DSC;" > import.csv
 ```

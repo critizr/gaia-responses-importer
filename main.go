@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -24,10 +25,26 @@ var (
 	argURL         = flag.String("url", "https://api.critizr.com/v2", "Gaia base URL")
 )
 
+type APIError struct {
+	Status  int
+	Payload string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API error: HTTP %d > %s", e.Status, e.Payload)
+}
+
+type ResponsePayload struct {
+	ID string
+}
+
 type Entry struct {
 	UID        string
 	Payload    string
+	ResponseId *string
 	ImportedAt *string
+	Err        *APIError
+	ImportTime int64
 }
 
 func makeEntry(rows *sql.Rows) (entry Entry, err error) {
@@ -46,33 +63,52 @@ func (e *Entry) doImport() error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", *argToken)
 
+	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
+	e.ImportTime = time.Since(start).Milliseconds()
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	body, _ := ioutil.ReadAll(resp.Body)
 	if resp.StatusCode != 201 {
-		body, _ := ioutil.ReadAll(resp.Body)
-		return fmt.Errorf("unexpected http status %d: %s", resp.StatusCode, body)
+		e.Err = &APIError{resp.StatusCode, string(body)}
+		return fmt.Errorf("unexpected status: %v", e.Err)
 	}
+
+	var response ResponsePayload
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("failed to parse payload: %s", body)
+	}
+	e.ResponseId = &response.ID
 
 	return nil
 }
 
 func (e *Entry) markImported(db *sql.DB) error {
-	statement, err := db.Prepare("UPDATE imports SET imported_at = ? WHERE uid = ?")
+	statement, err := db.Prepare("UPDATE imports SET response_id = ?, imported_at = ?, import_time_ms = ? WHERE uid = ?")
 	if err != nil {
 		return err
 	}
 	defer statement.Close()
 	now := time.Now().UTC()
-	_, err = statement.Exec(now.Format(time.RFC3339), e.UID)
+	_, err = statement.Exec(e.ResponseId, now.Format(time.RFC3339), e.ImportTime, e.UID)
+	return err
+}
+
+func (e *Entry) markErrored(db *sql.DB) error {
+	statement, err := db.Prepare("UPDATE imports SET error = ? WHERE uid = ?")
+	if err != nil {
+		return err
+	}
+	defer statement.Close()
+	_, err = statement.Exec(e.Err.Error(), e.UID)
 	return err
 }
 
 func fetchEntries(db *sql.DB) ([]Entry, error) {
 	var entries []Entry
-	rows, err := db.Query("SELECT * FROM imports WHERE imported_at IS NULL")
+	rows, err := db.Query("SELECT uid, payload, imported_at FROM imports WHERE imported_at IS NULL")
 	if err != nil {
 		return entries, err
 	}
@@ -127,13 +163,14 @@ loop:
 			log.Printf("processing entry %s", entry.UID)
 			if err := entry.doImport(); err != nil {
 				log.Printf("failed to import entry %s: %s", entry.UID, err)
-				goto Done
+				if err := entry.markErrored(db); err != nil {
+					log.Printf("failed to mark error for entry %s: %s", entry.UID, err)
+				}
+			} else {
+				if err := entry.markImported(db); err != nil {
+					log.Printf("failed to mark import for entry %s: %s", entry.UID, err)
+				}
 			}
-			if err := entry.markImported(db); err != nil {
-				log.Printf("failed to mark import for entry %s: %s", entry.UID, err)
-				goto Done
-			}
-		Done:
 			sem <- true
 			wg.Done()
 		}(entry)
