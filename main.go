@@ -43,7 +43,7 @@ type Entry struct {
 	Payload    string
 	ResponseId *string
 	ImportedAt *string
-	Err        *APIError
+	Err        error
 	ImportTime int64
 }
 
@@ -163,6 +163,9 @@ loop:
 			log.Printf("processing entry %s", entry.UID)
 			if err := entry.doImport(); err != nil {
 				log.Printf("failed to import entry %s: %s", entry.UID, err)
+				if entry.Err == nil {
+					entry.Err = err
+				}
 				if err := entry.markErrored(db); err != nil {
 					log.Printf("failed to mark error for entry %s: %s", entry.UID, err)
 				}
