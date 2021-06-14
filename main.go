@@ -139,7 +139,7 @@ func main() {
 		log.Fatalf("failed to fetch data: %s", err)
 	}
 
-	var wg sync.WaitGroup
+	log.Printf("setting concurrency to %d", *argConcurrency)
 	sem := make(chan bool, *argConcurrency)
 	for i := 0; i < *argConcurrency; i++ {
 		sem <- true
@@ -150,6 +150,7 @@ func main() {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	log.Printf("%d entries to process", len(entries))
+	var wg sync.WaitGroup
 loop:
 	for _, entry := range entries {
 		select {
